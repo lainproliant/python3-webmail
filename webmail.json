@@ -1,0 +1,22 @@
+/*
+ * Configuration file example.
+ */
+{
+   "gmail": {
+      "host":        "imap.gmail.com",
+      "port":        "993",
+      "ssl":         "enabled",
+
+      "username":    "bob@gmail.com",
+      "password":    "oranges1024"
+   }
+
+   "initech": {
+      "host":        "imap.initech.com",
+      "port":        "666",
+      "ssl":         "enabled",
+
+      "username":    "bob@initech.com",
+      "password":    "mystapler"
+   }
+}
