@@ -86,7 +86,7 @@ class MailClient (object):
    
    #----------------------------------------------------------------
    def set_mailbox (self, mailbox, readonly = False):
-      if not self.is_connected:
+      if not self.is_connected ():
          raise MailClientException ("Cannot set mailbox, not connected.")
 
       self.mailbox = mailbox
