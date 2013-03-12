@@ -82,7 +82,7 @@ class MailClient (object):
       for id_pair in id_pairs:
          ids.extend ((id_pair).decode ().split ())
 
-      return ids 
+      return ids
    
    #----------------------------------------------------------------
    def set_mailbox (self, mailbox, readonly = False):
