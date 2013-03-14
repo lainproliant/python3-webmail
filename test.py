@@ -19,5 +19,4 @@ for id in ids:
    sys.stdout.buffer.write (("%s\t%s" % (id, message.get_subject ())).encode ())
    print ()
    print ("-"*70)
-   sys.stdout.buffer.write (text_part.get_payload ())
-   print ()
+   print (repr (message.as_string()))
