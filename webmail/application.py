@@ -72,7 +72,7 @@ class BaseCommand (object):
    def __init__ (self, argv, shortopts, longopts, config):
       self.argv = argv
       self.shortopts = _G_SHORTOPTS + shortopts
-      self.longopts = _G_LONGOPTS = longopts
+      self.longopts = _G_LONGOPTS + longopts
       self.optional_config_files = DEFAULT_CONFIG_FILENAMES 
       self.specific_config_files = []
       self.config = DEFAULT_CONFIG
