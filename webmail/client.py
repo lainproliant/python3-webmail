@@ -175,7 +175,7 @@ class IMAPQuery (object):
 
    #----------------------------------------------------------------
    def body (self, s):
-      return self.extend ("BODY", s)
+      return self.extend ("BODY", "\"%s\"" % s)
 
    #----------------------------------------------------------------
    def cc (self, addr):
@@ -200,15 +200,15 @@ class IMAPQuery (object):
 
    #----------------------------------------------------------------
    def from_q (self, s):
-      return self.extend ("FROM", s)
+      return self.extend ("FROM", "\"%s\"" % s)
 
    #----------------------------------------------------------------
    def header (self, header, s):
-      return self.extend ("HEADER", header, s)
+      return self.extend ("HEADER", header, "\"%s\"" % s)
 
    #----------------------------------------------------------------
    def keyword (self, s):
-      return self.extend ("KEYWORD", s)
+      return self.extend ("KEYWORD", "\"%s\"" % s)
 
    #----------------------------------------------------------------
    def larger (self, n):
@@ -321,15 +321,15 @@ class IMAPQuery (object):
 
    #----------------------------------------------------------------
    def subject (self, s):
-      return self.extend ("SUBJECT", s)
+      return self.extend ("SUBJECT", "\"%s\"" % s)
 
    #----------------------------------------------------------------
    def text (self, s):
-      return self.extend ("TEXT", s)
+      return self.extend ("TEXT", "\"%s\"" % s)
 
    #----------------------------------------------------------------
    def to_q (self, s):
-      return self.extend ("TO", s)
+      return self.extend ("TO", "\"%s\"" % s)
 
    #----------------------------------------------------------------
    def uid (self, n):
@@ -353,7 +353,7 @@ class IMAPQuery (object):
 
    #----------------------------------------------------------------
    def unkeyword (self, s):
-      return self.extend ("UNKEYWORD", s)
+      return self.extend ("UNKEYWORD", "\"%s\"" % s)
 
    #----------------------------------------------------------------
    def unseen (self):

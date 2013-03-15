@@ -428,7 +428,7 @@ class BaseQueryCommand (BaseCommand):
                      IMAPQuery ([or_stack.pop ()]))
 
          elif or_stack:
-            or_stack.append ([q.phrases.pop ()])
+            or_stack.append (q.phrases.pop ())
             q = q.or_q (
                   IMAPQuery ([or_stack.pop ()]),
                   IMAPQuery ([or_stack.pop ()]))
@@ -523,7 +523,10 @@ class CheckMailCommand (BaseQueryCommand):
          uids.reverse ()
 
          if not self.config ['supress_summary']:
-            print ("%d messages found." % len (uids))
+            print ("%d message(s) found." % len (uids))
+
+         if self.config ['limit'] is not None:
+            uids = uids [:self.config ['limit']]
 
          for uid in uids:
             message = self.load_message (client, uid)
