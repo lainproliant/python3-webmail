@@ -62,21 +62,9 @@ class MailClient (object):
       return pyzmail.PyzMessage.factory (self.fetch_message_body (id))
 
    #----------------------------------------------------------------
-   def fetch_unread_count (self):
-      """
-         Fetch the unread message count of the current mailbox.
-         If no mailbox is specified, it may fetch the unread mail
-         count for all mailboxes in the account.
-      """
-
-      status, response = self.imap.status (self.get_mailbox (), '(UNSEEN)')
-      unread_count = int (response[0].decode ().split ()[2].strip (').,]'))
-      return unread_count
-
-   #----------------------------------------------------------------
    def fetch_unread_ids (self):
       """
-         Fetch a string list of the IDs of all messages in the
+         Fetch a string list of the UIDs of all messages in the
          current mailbox marked as unread.
       """
       status, id_pairs = self.imap.uid ('search', '(UNSEEN)')
@@ -88,12 +76,31 @@ class MailClient (object):
       return ids
    
    #----------------------------------------------------------------
+   def search (self, q):
+      """
+         Search the IMAP inbox with a query constructed from 
+         the given IMAPQuery object.  Returns a list of UIDs
+         for messages matching the given criterion.
+      """
+
+      status, id_pairs = self.imap.uid ('search', str (q))
+      ids = []
+
+      for id_pair in id_pairs:
+         ids.extend ((id_pair).decode ().split ())
+
+      return ids
+
+   #----------------------------------------------------------------
    def set_mailbox (self, mailbox, readonly = False):
       if not self.is_connected ():
          raise MailClientException ("Cannot set mailbox, not connected.")
 
       self.mailbox = mailbox
-      self.imap.select (self.mailbox, readonly)
+      status, message = self.imap.select (self.mailbox, readonly)
+
+      if status == 'NO':
+         raise MailClientException ("Could not change mailboxes: %s" % message)
 
    #----------------------------------------------------------------
    def get_mailbox (self):
@@ -114,8 +121,7 @@ class IMAPQuery (object):
    """
 
    #----------------------------------------------------------------
-   def __init__ (self, client, phrases = []):
-      self.client = client
+   def __init__ (self, phrases = []):
       self.phrases = phrases
 
    #----------------------------------------------------------------
@@ -134,8 +140,7 @@ class IMAPQuery (object):
          in the given query, and return a new query object.
       """
 
-      return IMAPQuery (self.client,
-            self.phrases + [args])
+      return IMAPQuery (self.phrases + [args])
 
    #----------------------------------------------------------------
    def extend_query (self, query):
@@ -144,8 +149,7 @@ class IMAPQuery (object):
          the given query.
       """
 
-      return IMAPQuery (self.client,
-            self.phrases + query.phrases)
+      return IMAPQuery (self.phrases + query.phrases)
 
    #----------------------------------------------------------------
    def all (self):
@@ -156,13 +160,13 @@ class IMAPQuery (object):
       return self.extend ("ANSWERED")
 
    #----------------------------------------------------------------
-   def mail_bcc (self, addr):
+   def bcc (self, addr):
       return self.extend ("BCC", addr)
 
    #----------------------------------------------------------------
    def before (self, dstr = None, dt = None):
       if dstr is None and dt is None:
-         raise ArgumentException ("Missing dstr or dt parameter.")
+         raise ValueError ("Missing dstr or dt parameter.")
 
       if dt is not None:
          dstr = dt.strftime (IMAP_DATE_FORMAT)
@@ -174,12 +178,12 @@ class IMAPQuery (object):
       return self.extend ("BODY", s)
 
    #----------------------------------------------------------------
-   def mail_cc (self, addr):
+   def cc (self, addr):
       return self.extend ("CC", addr)
 
    #----------------------------------------------------------------
    def contains (self, s):
-      q = IMAPQuery (self.client)
+      q = IMAPQuery ()
       return self.or_q (q.subject (s), q.text (s))
 
    #----------------------------------------------------------------
@@ -195,7 +199,7 @@ class IMAPQuery (object):
       return self.extend ("FLAGGED")
 
    #----------------------------------------------------------------
-   def mail_from (self, s):
+   def from_q (self, s):
       return self.extend ("FROM", s)
 
    #----------------------------------------------------------------
@@ -235,7 +239,7 @@ class IMAPQuery (object):
    #----------------------------------------------------------------
    def on (self, dstr = None, dt = None):
       if dstr is None and dt is None:
-         raise ArgumentException ("Missing dstr or dt parameter.")
+         raise ValueError ("Missing dstr or dt parameter.")
 
       if dt is not None:
          dstr = dt.strftime (IMAP_DATE_FORMAT)
@@ -253,7 +257,7 @@ class IMAPQuery (object):
       q = self.extend ("OR")
 
       if len (queryA.phrases) != 1 or len (queryB.phrases) != 1:
-         raise ArgumentException ("There must be only one phrase in each query parameter to IMAPQuery.or_q.")
+         raise ValueError ("There must be only one phrase in each query parameter to IMAPQuery.or_q.")
 
       for phrase in queryA.phrases:
          q = q.extend (*phrase)
@@ -274,7 +278,7 @@ class IMAPQuery (object):
    #----------------------------------------------------------------
    def sent_before (self, dstr = None, dt = None):
       if dstr is None and dt is None:
-         raise ArgumentException ("Missing dstr or dt parameter.")
+         raise ValueError ("Missing dstr or dt parameter.")
 
       if dt is not None:
          dstr = dt.strftime (IMAP_DATE_FORMAT)
@@ -284,7 +288,7 @@ class IMAPQuery (object):
    #----------------------------------------------------------------
    def sent_on (self, dstr = None, dt = None):
       if dstr is None and dt is None:
-         raise ArgumentException ("Missing dstr or dt parameter.")
+         raise ValueError ("Missing dstr or dt parameter.")
 
       if dt is not None:
          dstr = dt.strftime (IMAP_DATE_FORMAT)
@@ -294,7 +298,7 @@ class IMAPQuery (object):
    #----------------------------------------------------------------
    def sent_since (self, dstr = None, dt = None):
       if dstr is None and dt is None:
-         raise ArgumentException ("Missing dstr or dt parameter.")
+         raise ValueError ("Missing dstr or dt parameter.")
 
       if dt is not None:
          dstr = dt.strftime (IMAP_DATE_FORMAT)
@@ -304,7 +308,7 @@ class IMAPQuery (object):
    #----------------------------------------------------------------
    def since (self, dstr = None, dt = None):
       if dstr is None and dt is None:
-         raise ArgumentException ("Missing dstr or dt parameter.")
+         raise ValueError ("Missing dstr or dt parameter.")
 
       if dt is not None:
          dstr = dt.strftime (IMAP_DATE_FORMAT)
@@ -324,7 +328,7 @@ class IMAPQuery (object):
       return self.extend ("TEXT", s)
 
    #----------------------------------------------------------------
-   def mail_to (self, s):
+   def to_q (self, s):
       return self.extend ("TO", s)
 
    #----------------------------------------------------------------
@@ -353,5 +357,5 @@ class IMAPQuery (object):
 
    #----------------------------------------------------------------
    def unseen (self):
-      return self.extend (unseen)
+      return self.extend ("UNSEEN")
 
