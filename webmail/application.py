@@ -53,9 +53,9 @@ DEFAULT_CONFIG = {
       'line_format':             '[$status] $uid <>    <$sender_name>',
       'date_format':             'oranges',
 
-      'normalize_enabled':       True,
+      'normalize_enabled':       False,
       'normalize_form':          'NFD',
-      'print_encoding':          'ascii',
+      'print_encoding':          'utf8',
       'print_encoding_rule':     'ignore',
       'file_encoding':           'utf8'
 }
