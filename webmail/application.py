@@ -1,6 +1,3 @@
-#!/usr/bin/python
-# -*- coding: utf-8 -*-
-#
 #-------------------------------------------------------------------
 # webmail.application
 #
@@ -8,20 +5,23 @@
 #
 # Author: Lee Supe
 # Date: March 11th, 2013
-#
 #-------------------------------------------------------------------
 
 import datetime
 import email.utils
 import getopt
 import getpass
+import mimetypes
 import os
 import re
+import subprocess
 import sys
 import time
 import unicodedata
 
 from string import Template
+from tempfile import NamedTemporaryFile
+from textwrap import TextWrapper
 
 from parsedatetime import parsedatetime as pdt
 
@@ -30,6 +30,8 @@ from .data import parse_json
 
 #-------------------------------------------------------------------
 DEFAULT_CONFIG = {
+      'account':                 'default',
+
       'imap_hostname':           'imap.gmail.com',
       'imap_port':               993,
       'imap_ssl':                True,
@@ -40,7 +42,7 @@ DEFAULT_CONFIG = {
 
       'cache_dir':               '~/.webmail/',
       'cache_enabled':           True,
-      'cache_alt_name':          None,
+      'download_threshold':      100000,
 
       'smtp_hostname':           'smtp.gmail.com',
       'smtp_port':               587,
@@ -48,25 +50,134 @@ DEFAULT_CONFIG = {
       'smtp_text_enc':           'us-ascii',
 
       'verbose':                 0,
-      'supress_summary':         False,
-      'line_limit':              120,
-      'line_format':             '[$status] $uid <>    <$sender_name>',
-      'date_format':             'oranges',
+      'supress':                 False,
+      'line_width':              120,
+      'line_format':             '[$status] $uid <>    <$sender_name> $date',
+      'st_date_format_recent':   '%b %d %l:%M%P',
+      'st_date_format_far':      '%b %d %Y %l:%M%P',
 
+      'date_format':             '%B %d %Y, %l:%M%P',
       'normalize_enabled':       False,
       'normalize_form':          'NFD',
       'print_encoding':          'utf8',
       'print_encoding_rule':     'ignore',
-      'file_encoding':           'utf8'
+      'file_encoding':           'utf8',
+
+      'mime:text/plain':         "PRINT",
+      'mime:text/html':          'chromium --user-data-dir=/tmp %s',
+      'mime:application/pdf':    'evince %s',
+      'mime:image/*':            'geeqie %s',
+      'mime:video/*':            'vlc %s',
+      
+      'debug':                   False,
+
+      'default':                 {}
 }
 
 DEFAULT_CONFIG_FILENAMES = ["/etc/webmail.json", "~/.webmail.json"]
 
-_G_SHORTOPTS = 'c:i:l:s'
+_G_SHORTOPTS = 'c:i:l:sa:'
 _G_LONGOPTS = ['config=', 'imap-host=', 'imap-port=',
                'imap-user=', 'imap-password=',
-               'inbox=', 'limit=', 'supress']
+               'inbox=', 'limit=', 'supress',
+               'account=', 'debug']
 
+#-------------------------------------------------------------------
+class ThresholdExceeded (Exception):
+   def __init__ (self):
+      Exception.__init__ (self, "A threshold was exceeded.")
+
+#-------------------------------------------------------------------
+class MailpartHandler (object):
+   """
+      An object for opening and saving mailparts.
+   """
+   
+   def __init__ (self, config, part, part_num):
+     self.config = config
+     self.part = part
+     self.part_num = part_num
+
+   def get_file_extension (self):
+      """
+         Determine an appropriate file extension for the content
+         based on the filename or guess the extension based on 
+         the content MIME type.
+      """
+
+      if self.part.filename is None:
+         return mimetypes.guess_extension (self.part.type)
+
+      else:
+         return os.path.splitext (self.part.filename)[1]
+
+   def open (self):
+      """
+         Open the mailpart for viewing by the user.  This could
+         result in the execution of a subprocess or simply printing
+         the decoded mailpart to standard out.
+
+         The item is opened and handled based on its MIME type,
+         and configured via 'mime:<type>' mapped to a command
+         or the word "PRINT", e.g.:
+
+         {
+            ...
+            'mime:text/plain':      "PRINT",
+            'mime:text/html':       "cat %s | w3m",
+            'mime:image/*':         "feh %s",
+            ,,,
+         }
+      """
+
+      # See if there is a handler for the specific MIME type.
+      # Then, check for a generic handler based on the general
+      # MIME type (e.g., 'image/*').
+
+      handler_key = 'mime:%s' % self.part.type
+      handler = None
+      
+      if handler_key not in self.config:
+         handler_key = 'mime:%s/*' % (self.part.type.split ('/')[0])
+         if handler_key not in self.config:
+            raise Exception ("No file handler configured to open mimetype: %s." % self.part.type)
+
+      handler = self.config [handler_key]
+      
+      if handler == 'PRINT':
+         tw = TextWrapper (
+               break_long_words = False,
+               replace_whitespace = False)
+
+         charset = self.part.charset
+
+         if charset is None:
+            print ("Warning: mailpart %d does not specify a charset, assuming 'utf8'." % self.part_num)
+            charset = 'utf8'
+
+         print ()
+         print ('-' * self.config ['line_width'])
+         lines = tw.wrap (self.part.get_payload ().decode (charset))
+         for line in lines:
+            print (line)
+
+      else:
+         # Save the mailpart payload to a file for further processing.
+         tmpfile = NamedTemporaryFile (suffix = self.get_file_extension (), delete = False)
+         tmpfile.write (self.part.get_payload ())
+         tmpfile.close ()
+
+         handler_cmd = handler % tmpfile.name
+
+         if self.config ['debug']:
+            print ("Running: %s" % handler_cmd)
+
+         retcode = subprocess.call (handler_cmd, shell = True)
+         os.unlink (tmpfile.name)
+         
+         if retcode != 0:
+            raise Exception ("Error executing MIME handler (%d): %s" % (retcode, handler_cmd))
+   
 #-------------------------------------------------------------------
 class BaseCommand (object):
    """
@@ -119,7 +230,13 @@ class BaseCommand (object):
          elif opt in ['-i', '--inbox']:
             self.config ['inbox'] = str (val)
          elif opt in ['-s', '--supress']:
-            self.config ['supress_summary'] = True
+            self.config ['supress'] = True
+         elif opt in ['-a', '--account']:
+            self.config ['account'] = str (val)
+         elif opt in ['--debug']:
+            self.config ['debug'] = True
+
+      self.process_account_settings (self.config ['account'])
 
    #----------------------------------------------------------------
    def process_account_settings (self, account):
@@ -159,6 +276,9 @@ class BaseCommand (object):
       """
          Load a message item from the cache if it exists.  Returns None if
          the file does not exist in the cache or the cache is disabled.
+
+         uid:
+            The message to load from cache.
          
          Config Settings:
             cache_enabled:
@@ -174,7 +294,11 @@ class BaseCommand (object):
          return None
 
       try:
-         filename = os.path.join (os.path.expanduser (self.config ['cache_dir']), "%s.webmail" % uid)
+         cache_dir = os.path.join (
+               os.path.expanduser (self.config ['cache_dir']),
+               self.config ['account'])
+
+         filename = os.path.join (cache_dir, "%s.webmail" % uid)
          raw_message = None
 
          with open (filename, 'rb') as in_file:
@@ -187,26 +311,45 @@ class BaseCommand (object):
          return None
 
    #----------------------------------------------------------------
-   def load_message (self, client, uid):
+   def load_message (self, client, uid, threshold = None):
       """
          Loads an emessage from the cache directory or downloads
          the emessage from the server if not found or if the cache
          is not enabled.
+
+         client:
+            A MailClient used to fetch messages.
+         uid:
+            The UID of the message to be fetched.
+         threshold:
+            If specified, the maximum size in bytes of a message
+            to be fetched.  If the message is larger and not
+            already cached, ThresholdExceeded will be raised.
          
          Config Settings:
             cache_enabled:
                If this setting is False, load_message will not attempt to
                load the message from the email cache.
       """
-
+      
       if not self.config ['cache_enabled']:
          return client.fetch_message (uid)
-
+      
       message = self.cache_load_message (uid)
 
       if not message:
-         message = client.fetch_message (uid)
-         self.cache_save_message (uid, message)
+         size = client.fetch_message_size (uid)
+
+         if size is None:
+            # The message doesn't exist on the IMAP server.
+            return None
+
+         if threshold is not None and size > threshold:
+            message = client.fetch_message_headers (uid)
+         else:
+            message = client.fetch_message (uid)
+            if message is not None:
+               self.cache_save_message (uid, message)
 
       return message
 
@@ -215,6 +358,11 @@ class BaseCommand (object):
       """
          Save the given message to the email cache.
          
+         uid:
+            The UID of the message to be saved.
+         message:
+            A PyzMessage object representing the message.
+
          Config Settings:
             cache_dir:
                The directory under which emails are written.
@@ -222,7 +370,17 @@ class BaseCommand (object):
                The encoding format used to store emails.
       """
       try:
-         filename = os.path.join (os.path.expanduser (self.config ['cache_dir']), "%s.webmail" % uid)
+         cache_dir = os.path.join (
+               os.path.expanduser (self.config ['cache_dir']),
+               self.config ['account'])
+
+         if not os.path.isdir (cache_dir):
+            try:
+               os.makedirs (cache_dir)
+            except OSError as e:
+               raise Exception ("Unable to create cache directory: %s" % str (e))
+
+         filename = os.path.join (cache_dir, "%s.webmail" % uid)
          with open (filename, 'wb') as out_file:
             out_file.write (message.as_string ().encode (self.config ['file_encoding']))
          
@@ -230,29 +388,100 @@ class BaseCommand (object):
          print ("Could not save message %s to cache: %s" % (uid, e), file = sys.stderr)
 
    #----------------------------------------------------------------
-   def print_message_status (self, uid, message):
+   def perform_login (self):
+      """
+         Attempt to perform a login with the current settings,
+         prompting the user if necessary for a username
+         and password.
+      """
+
+      while not self.config ['imap_username'] or \
+            not self.config ['imap_username'].strip ():
+         sys.stdout.write ("Username: ")
+         self.config ['imap_username'] = input ()
+
+      while not self.config ['imap_password']:
+         self.config ['imap_password'] = getpass.getpass ()
+
+      client = MailClient ()
+      client.connect (
+            self.config ['imap_username'],
+            self.config ['imap_password'],
+            self.config ['imap_hostname'],
+            self.config ['imap_port'],
+            self.config ['imap_ssl'])
+
+      return client
+
+   #----------------------------------------------------------------
+   def print_message_status (self, client, uid):
       """
          Print a line containing information about the message.
 
+         client:
+            A logged-in MailClient object with a mailbox selected.
+         uid:
+            The UID of the message for which status will be displayed.
+
          Config Settings:
-            line_limit:
+            download_threshold:
+               If a message does not exceed this threshold size in bytes,
+               it will be downloaded and cached locally.  Otherwise,
+               IMAP queries will be used to fetch the information
+               necessary to display the message's status.
+            st_date_format_recent:
+               The formatting of dates in the status line, as accepted by
+               datetime.datetime.strftime ().
+            line_format:
+               A format string used to display the status line.
+               This format string may have any of the following:
+                  uid:
+                     The UID of the message.
+                  date:
+                     The date of the message, as formatted by 'st_date_format_recent'.
+                  sender_name:
+                     The name (e.g., "Lee Supe") of the sender.
+                  sender_addr:
+                     The address (e.g., "lain.proliant@gmail.com") of the sender.
+                  status:
+                     A single character representing the status of the message.
+                     '!' for unread messages, blank for read messages.
+                  subject:
+                     The subject of the message.  This may also be specified
+                     as "<>", in which case the subject will be displayed and
+                     sized to fill all remaining space not occupied by other fields.
+            line_width:
                The maximum length of the message summary, or "subject" line
                for visibility in console printing.
+            print_encoding:
+               The encoding used to output text.  This should usually remain 'utf8'
+               unless you are printing to a console that does not support unicode.
+               Setting this property to 'ascii' will disable Unicode output and
+               cause "..." to be printed instead of an ellipsis.
+
       """
       
       line = None
+      
+      message = self.load_message (client, uid,
+            threshold = self.config ['download_threshold'])
+      
+      if message is None: 
+         raise NotImplementedError ("Message partial fetching not yet implemented.")
 
-      from_addresses = message.get_addresses ('from')
-      sender_name = from_addresses[0][0]
-      sender_addr = from_addresses[0][1]
-      status = '!'
-      subject = self.normalize (message.get_subject ())
-      subject = re.sub ('\s+', ' ', subject)
-      subject = re.sub ('\r|\n', '', subject)
+      else:
+         from_addresses = message.get_addresses ('from')
+         sender_name = from_addresses[0][0]
+         sender_addr = from_addresses[0][1]
+         status = '!'
+         subject = self.normalize (message.get_subject ())
+         subject = re.sub ('\s+', ' ', subject)
+         subject = re.sub ('\r|\n', '', subject)
 
-      date_ts = email.utils.parsedate_tz (message.get_decoded_header ('Date'))
-      date = datetime.datetime.fromtimestamp (email.utils.mktime_tz (
-         date_ts))
+         date_ts = email.utils.parsedate_tz (message.get_decoded_header ('Date'))
+         date = datetime.datetime.fromtimestamp (email.utils.mktime_tz (
+            date_ts))
+
       
       template = Template (self.config ['line_format'])
       pre_line = template.substitute (
@@ -261,15 +490,15 @@ class BaseCommand (object):
             sender_addr = sender_addr,
             status = status,
             subject = subject,
-            date = date.strftime (self.config ['date_format'])) 
+            date = date.strftime (self.config ['st_date_format_recent'])) 
       
       ellipsis = '...'
       if self.config ['print_encoding'] != 'ascii':
          ellipsis = '\u2026'
 
       if '<>' in pre_line:
-         if self.config ['line_limit'] is not None:
-            max_len = self.config ['line_limit'] - len (pre_line) - 2
+         if self.config ['line_width'] is not None:
+            max_len = self.config ['line_width'] - len (pre_line) - 2
             if len (subject) > max_len:
                subject = subject [0:max_len - len (ellipsis)] + ellipsis
             else:
@@ -280,9 +509,9 @@ class BaseCommand (object):
       else:
          line = pre_line
 
-      if self.config ['line_limit'] is not None:
-         if len (line) > self.config ['line_limit']:
-            line = line [0:(self.config ['line_limit'] - len (ellipsis))] + ellipsis
+      if self.config ['line_width'] is not None:
+         if len (line) > self.config ['line_width']:
+            line = line [0:(self.config ['line_width'] - len (ellipsis))] + ellipsis
       
       print (line)
 
@@ -309,7 +538,7 @@ class BaseQueryCommand (BaseCommand):
                   'smaller=', 'subject=', 'text=',
                   'to=', 'uid=', 'unanswered',
                   'undeleted', 'undraft', 'unflagged',
-                  'unkeyword=', 'unseen']
+                  'unkeyword=', 'unseen', 'gmail=']
 
       self.query = IMAPQuery ()
 
@@ -351,6 +580,8 @@ class BaseQueryCommand (BaseCommand):
             q = q.deleted ()
          elif opt == '--draft':
             q = q.draft ()
+         elif opt == '--gmail':
+            q = q.gmail_search (str (val))
          elif opt == '--flagged':
             q = q.flagged ()
          elif opt == '--from':
@@ -443,16 +674,65 @@ class BaseQueryCommand (BaseCommand):
       return dt.strftime ("%d-%b-%Y")
 
 #-------------------------------------------------------------------
-class CheckMailCommand (BaseQueryCommand):
+class SearchMailCommand (BaseQueryCommand):
    """
-      Command to check the mailbox for new messages
-      and print them in a list with uid and subject.
+      Search the mailbox or check for new messages, with the option
+      to perform operations on search results.
+
+      Usage:
+         webmail search <options / queries / operations>
+      
+      Options:
+         -u, --username <username>     (config: imap_username)
+            The IMAP username.  User will be prompted if missing.
+
+         -p, --password <password>     (config: imap_password)
+            The IMAP password.  User will be prompted if missing.
+
+         -H, --host <hostname>         (config: imap_hostname)
+            The IMAP server to connect to. Default is 'imap.gmail.com'.
+
+         -P, --port <port>             (config: imap_port)
+            The IMAP server port. Default is '993'.
+
+         -i, --inbox <inbox>           (config: imap_mailbox)
+            The IMAP mailbox from which to read.  Default is 'INBOX'.
+
+         --no-ssl                      (config: imap_ssl)
+            Disables IMAP SSL/TLS.  Not recommended, enabled by default.
+
+         -h, --help
+            Prints this help message.
+
+      Queries:
+         This command supports search queries.  For help regarding
+         search queries, type "webmail help queries".
+
+      Operations:
+         --flag FLAG
+            Flag each message with the given flag.
+         
+         --unflag FLAG
+            Remove the given flag from each message.
+
+      Parameters:
+         UID
+            Required. The UID of the message to read.
+
+      Notes:
+         Operations may only be performed on search results.
+
+         This is the default command.  For a list of available commands,
+         type "webmail help".
    """
 
    #----------------------------------------------------------------
    def __init__ (self, argv):
-      SHORTOPTS   = 'su:p:l:h:i:p'
-      LONGOPTS    = ['username=', 'password=', 'limit=', 'host=', 'inbox=', 'port=', 'no-ssl']
+      SHORTOPTS   = 'su:p:l:H:i:p'
+      LONGOPTS    = ['username=', 'password=', 'limit=', 'host=', 'inbox=', 'port=', 'no-ssl',
+            'flag=', 'unflag=', 'print']
+      
+      self.operations = []
 
       BaseQueryCommand.__init__ (
             self, argv, SHORTOPTS, LONGOPTS, {
@@ -470,70 +750,238 @@ class CheckMailCommand (BaseQueryCommand):
             self.config ['imap_password'] = str (val)
          elif opt in ['-l', '--limit']:
             self.config ['limit'] = int (val)
+         elif opt in ['-H', '--host']:
+            self.config ['imap_hostname'] = str (val)
+         elif opt in ['-i', '--inbox']:
+            self.config ['imap_mailbox'] = str (val)
+         elif opt in ['-P', '--port']:
+            self.config ['imap_port'] = int (val)
+         elif opt in ['--no-ssl']:
+            self.config ['imap_ssl'] = False
+         elif opt in ['--flag', '--unflag']:
+            self.operations.append ((opt, val))
+         elif opt in ['--print']:
+            self.operations.append ((opt, val))
+            self.config ['supress'] = False
+
+   #----------------------------------------------------------------
+   def run (self):
+      client = self.perform_login ()
+      
+      client.set_mailbox (self.config ['imap_mailbox'], True)
+
+      message = "%d message(s) found."
+      
+      # If no query is specified, display new messages.
+      if len (self.query.phrases) < 1:
+         self.query = self.query.unseen ()
+         message = "%d new message(s)."
+      
+      if self.config ['debug']:
+         print ("Query: %s" % str (self.query))
+
+      uids = client.search (self.query)
+      uids.reverse ()
+      
+      print (message % len (uids))
+
+      if self.config ['limit'] is not None:
+         uids = uids [:self.config ['limit']]
+
+      if not self.operations:
+         self.operations.append (('--print', None))
+      
+      if len (uids) > 0:
+         for opt, val in self.operations:
+            if opt == '--print' and not self.config ['supress']:
+               client.set_mailbox (self.config ['imap_mailbox'], True)
+
+               for uid in uids:
+                  self.print_message_status (client, uid)
+
+            if opt == '--flag':
+               client.set_mailbox (self.config ['imap_mailbox'], False)
+
+               flag = str (val)
+               if flag[0] != '\\':
+                  flag = '\\' + str (val)
+
+               client.flag (','.join (uids), flag)
+               print ("%d message(s) flagged as %s." % (len (uids), flag))
+
+            elif opt == '--unflag':
+               client.set_mailbox (self.config ['imap_mailbox'], False)
+
+               flag = str (val)
+               if flag[0] != '\\':
+                  flag = '\\' + str (val)
+
+               client.unflag (','.join (uids), flag)
+               print ("%s flag removed from %d messages." % (flag, len (uids)))
+
+#-------------------------------------------------------------------
+class ReadMailCommand (BaseCommand):
+   """
+      Read a mail message specified by UID.
+
+      Usage:
+         webmail read <options> UID
+      
+      Options:
+         -u, --username <username>     (config: imap_username)
+            The IMAP username.  User will be prompted if missing.
+
+         -p, --password <password>     (config: imap_password)
+            The IMAP password.  User will be prompted if missing.
+
+         -H, --host <hostname>         (config: imap_hostname)
+            The IMAP server to connect to. Default is 'imap.gmail.com'.
+
+         -P, --port <port>             (config: imap_port)
+            The IMAP server port. Default is '993'.
+
+         -i, --inbox <inbox>           (config: imap_mailbox)
+            The IMAP mailbox from which to read.  Default is 'INBOX'.
+
+         --no-ssl                      (config: imap_ssl)
+            Disables IMAP SSL/TLS.  Not recommended, enabled by default.
+
+         -h, --help
+            Prints this help message.
+
+         UID
+            Required. The UID of the message to read.
+
+      For a list of available commands, type "webmail help".
+   """
+
+   #----------------------------------------------------------------
+   def __init__ (self, argv):
+      SHORTOPTS   = 'u:p:H:i:P:'
+      LONGOPTS    = ['username=', 'password=', 'host=', 'inbox=', 'port=', 'no-ssl']
+      
+      self.message_uid = None
+      self.message_part = None
+
+      BaseCommand.__init__ (
+            self, argv, SHORTOPTS, LONGOPTS, {})
+
+   #----------------------------------------------------------------
+   def process_config (self, opts, args):
+      BaseCommand.process_config (self, opts, args)
+      
+      if len (args) < 1:
+         raise Exception ("No message UID specified to read.")
+
+      self.message_uid = args.pop (0)
+
+      if args:
+         self.message_part = int (args.pop (0))
+
+      for opt, val in opts:
+         if opt in ['-u', '--username']:
+            self.config ['imap_username'] = str (val)
+         elif opt in ['-p', '--password']:
+            self.config ['imap_password'] = str (val)
+         elif opt in ['-l', '--limit']:
+            self.config ['limit'] = int (val)
          elif opt in ['-h', '--host']:
             self.config ['imap_hostname'] = str (val)
          elif opt in ['-i', '--inbox']:
             self.config ['imap_mailbox'] = str (val)
-         elif opt in ['-p', '--port']:
+         elif opt in ['-P', '--port']:
             self.config ['imap_port'] = int (val)
          elif opt in ['--no-ssl']:
             self.config ['imap_ssl'] = False
 
    #----------------------------------------------------------------
    def run (self):
-      while not self.config ['imap_username'] or \
-            not self.config ['imap_username'].strip ():
-         sys.stdout.write ("Username: ")
-         self.config ['imap_username'] = input ()
+      client = self.perform_login ()
+      # The readonly flag should be false once we are actually
+      # reading messages, so they are flagged as read.
+      client.set_mailbox (self.config ['imap_mailbox'])
 
-      while not self.config ['imap_password']:
-         self.config ['imap_password'] = getpass.getpass ()
-
-      client = MailClient ()
-      client.connect (
-            self.config ['imap_username'],
-            self.config ['imap_password'],
-            self.config ['imap_hostname'],
-            self.config ['imap_port'],
-            self.config ['imap_ssl'])
-
-      client.set_mailbox (self.config ['imap_mailbox'], True)
+      message = self.load_message (client, self.message_uid)
+      if message is None:
+         raise Exception ("No message exists with UID %s." % self.message_uid)
       
-      # If no query is specified, display new messages.
-      if len (self.query.phrases) < 1:
-         uids = client.fetch_unread_ids ()
-         uids.reverse ()
+      client.flag (self.message_uid, '\\Seen')
 
-         if not self.config ['supress_summary']:
-            print ("%d new message(s)." % len (uids))
+      from_addr = message.get_address ('from')
+      to_addrs = message.get_addresses ('to')
+      cc_addrs = message.get_addresses ('cc')
 
-         if self.config ['limit'] is not None:
-            uids = uids [:self.config ['limit']]
+      date_ts = email.utils.parsedate_tz (message.get_decoded_header ('Date'))
+      date = datetime.datetime.fromtimestamp (email.utils.mktime_tz (
+         date_ts))
+      
+      print ("Date: %s" % date.strftime (self.config ['date_format']))
+      print ("Subject: %s" % self.normalize (message.get_subject ()))
+      print ("From: %s <%s>" % from_addr)
+      print ("To: %s" % (', '.join (["%s <%s>" % x for x in to_addrs])))
+      if cc_addrs:
+         print ("CC: %s" % (', '.join (["%s <%s>" % x for x in cc_addrs])))
+      print ()
+      n = 0
+      for part in message.mailparts:
+         mailpart_str = "mailpart: %d" % n
          
-         for uid in uids:
-            message = self.load_message (client, uid)
-            self.print_message_status (uid, message)
+         if part.disposition is not None:
+            mailpart_str = "%s (%s: %s)" % (mailpart_str, part.disposition, part.type)
+         else:
+            mailpart_str = "%s (%s)" % (mailpart_str, part.type)
 
-      # If a query is specified, perform a search and return
-      # the results
+         if part.filename is not None:
+            mailpart_str = "%s [%s]" % (mailpart_str, part.filename) 
+         
+         print (mailpart_str)
+         n += 1
+
+      print ()
+      
+      if self.message_part is None:
+         if not self.config ['supress']:
+            n = 0
+            for part in message.mailparts:
+               if part.type == 'text/plain' and part.is_body:
+                  handler = MailpartHandler (self.config, part, n)
+                  handler.open ()
+               n += 1
+
       else:
-         print ("QUERY: %s" % str (self.query))
-
-         uids = client.search (self.query)
-         uids.reverse ()
-
-         if not self.config ['supress_summary']:
-            print ("%d message(s) found." % len (uids))
-
-         if self.config ['limit'] is not None:
-            uids = uids [:self.config ['limit']]
-
-         for uid in uids:
-            message = self.load_message (client, uid)
-            self.print_message_status (uid, message)
+         part = message.mailparts [self.message_part]
+         handler = MailpartHandler (self.config, part, self.message_part)
+         handler.open ()
+      
+#-------------------------------------------------------------------
+COMMAND_MAP = {
+      "search":      SearchMailCommand,
+      "read":        ReadMailCommand
+}
 
 #-------------------------------------------------------------------
 if __name__ == "__main__":
-   app = CheckMailCommand (sys.argv[1:])
-   app.run ()
+   cmd_name = "search"
+   acct_name = None
+
+   argv = sys.argv [1:]
+
+   if len (argv) > 0 and len (argv[0]) > 0 and argv[0][0] != '-':
+      cmd_name = argv.pop (0)
+   
+   try:
+      if cmd_name not in COMMAND_MAP:
+         raise Exception ("Unrecognized command: %s" % cmd_name)
+   
+      app = COMMAND_MAP [cmd_name] (argv)
+      app.run ()
+
+   except Exception as e:
+      import traceback
+      print ("Fatal error: %s" % e, file=sys.stderr)
+
+      if '--debug' in argv:
+         print ('-' * 70, file=sys.stderr)
+         traceback.print_exc (file=sys.stderr) 
+         sys.exit (1)
 

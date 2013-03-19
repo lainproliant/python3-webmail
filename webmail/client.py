@@ -32,7 +32,6 @@ class MailClient (object):
       self.imap = None
       self.mailbox = None
 
-
    #----------------------------------------------------------------
    def connect (self, username, password,
                 hostname = "imap.gmail.com",
@@ -50,7 +49,35 @@ class MailClient (object):
       """
 
       status, response = self.imap.uid ('fetch', id, '(RFC822)')
+      if response[0] is None:
+         return None
+
       return response[0][1]
+
+   #----------------------------------------------------------------
+   def fetch_message_size (self, id):
+      """
+         Fetch the size of the given message in bytes.
+      """
+
+      status, response = self.imap.uid ('fetch', id, '(RFC822.SIZE)')
+      if response[0] is None:
+         return None
+
+      return int (response[0].split ()[-1][:-1])
+
+   #----------------------------------------------------------------
+   def fetch_message_headers (self, id):
+      """
+         Fetch the size of the given message in bytes.
+      """
+
+      status, response = self.imap.uid ('fetch', id, '(RFC822.HEADER)')
+      
+      if response[0] is None:
+         return None
+      
+      return pyzmail.PyzMessage.factory (response[0][1]) 
 
    #----------------------------------------------------------------
    def fetch_message (self, id):
@@ -58,6 +85,11 @@ class MailClient (object):
          Fetch the given message from the server and parse it
          into a PyzMessage structure.
       """
+      
+      body = self.fetch_message_body (id)
+
+      if body is None:
+         return None
 
       return pyzmail.PyzMessage.factory (self.fetch_message_body (id))
 
@@ -92,12 +124,28 @@ class MailClient (object):
       return ids
 
    #----------------------------------------------------------------
+   def flag (self, uid, *flags):
+      """
+         Mark a message in an IMAP inbox with the given flags.
+      """
+
+      self.imap.uid ('store', uid, '+FLAGS', *flags)
+   
+   #----------------------------------------------------------------
+   def unflag (self, uid, *flags):
+      """
+         Remove the given flags from a message in an IMAP inbox.
+      """
+
+      self.imap.uid ('store', uid, '-FLAGS', *flags)
+
+   #----------------------------------------------------------------
    def set_mailbox (self, mailbox, readonly = False):
       if not self.is_connected ():
          raise MailClientException ("Cannot set mailbox, not connected.")
 
       self.mailbox = mailbox
-      status, message = self.imap.select (self.mailbox, readonly)
+      status, message = self.imap.select ("\"%s\"" % self.mailbox, readonly)
 
       if status == 'NO':
          raise MailClientException ("Could not change mailboxes: %s" % message)
@@ -193,6 +241,10 @@ class IMAPQuery (object):
    #----------------------------------------------------------------
    def draft (self):
       return self.extend ("DRAFT")
+
+   #----------------------------------------------------------------
+   def gmail_search (self, s):
+      return self.extend ("X-GM-RAW", "\"%s\"" % s)
 
    #----------------------------------------------------------------
    def flagged (self):
