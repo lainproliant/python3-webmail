@@ -186,6 +186,8 @@ class BaseCommand (object):
       in a standard way and coordinates other global settings.
    """
 
+   PARAMETERS = 0
+
    #----------------------------------------------------------------
    def __init__ (self, argv, shortopts, longopts, config):
       self.argv = argv
@@ -533,7 +535,7 @@ class BaseQueryCommand (BaseCommand):
       A base class for commands which need to deal with
       queries against an IMAP mailbox.
    """
-   
+
    #----------------------------------------------------------------
    def __init__ (self, argv, shortopts, longopts, config):
       SHORTOPTS = ''
@@ -860,6 +862,8 @@ class ReadMailCommand (BaseCommand):
       For a list of available commands, type "webmail help".
    """
 
+   PARAMETERS = 1
+
    #----------------------------------------------------------------
    def __init__ (self, argv):
       SHORTOPTS   = 'u:p:H:i:P:'
@@ -992,21 +996,27 @@ COMMAND_MAP = {
 
 #-------------------------------------------------------------------
 if __name__ == "__main__":
-   cmd_name = "--search"
+   cmd = SearchMailCommand
    acct_name = None
 
    argv = sys.argv [1:]
    
-   for arg in argv:
-      if arg in COMMAND_MAP.keys ():
-         cmd_name = arg
+   for arg in argv[:]:
+      if arg in COMMAND_MAP:
+         cmd = COMMAND_MAP [arg]
+
+         for x in range (cmd.PARAMETERS):
+            param = None
+            x = argv.index (arg) + 1
+            if x < len (argv) and len (argv[x]) > 0 and argv[x][0] != '-':
+               param = argv[x]
+               argv.pop (x)
+               argv.append (param)
+
          argv.remove (arg)
 
    try:
-      if cmd_name not in COMMAND_MAP:
-         raise Exception ("Unrecognized command: %s" % cmd_name)
-   
-      app = COMMAND_MAP [cmd_name] (argv)
+      app = cmd (argv)
       app.run ()
 
    except Exception as e:
