@@ -77,11 +77,12 @@ DEFAULT_CONFIG = {
 
 DEFAULT_CONFIG_FILENAMES = ["/etc/webmail.json", "~/.webmail.json"]
 
-_G_SHORTOPTS = 'c:i:l:sa:N'
+_G_SHORTOPTS = 'c:i:l:sa:NC'
 _G_LONGOPTS = ['config=', 'imap-host=', 'imap-port=',
                'imap-user=', 'imap-password=',
                'inbox=', 'limit=', 'supress',
-               'account=', 'debug', 'no-prompt']
+               'account=', 'debug', 'no-prompt',
+               'no-cache']
 
 #-------------------------------------------------------------------
 class ThresholdExceeded (Exception):
@@ -191,6 +192,7 @@ class BaseCommand (object):
    #----------------------------------------------------------------
    def __init__ (self, argv, shortopts, longopts, config):
       self.argv = argv
+      self.argv_copy = argv[:]
       self.shortopts = _G_SHORTOPTS + shortopts
       self.longopts = _G_LONGOPTS + longopts
       self.optional_config_files = DEFAULT_CONFIG_FILENAMES 
@@ -240,6 +242,8 @@ class BaseCommand (object):
             self.config ['debug'] = True
          elif opt in ['-N', '--no-prompt']:
             self.config ['interactive'] = False
+         elif opt in ['-C', '--no-cache']:
+            self.config ['cache_enabled'] = False
 
       self.process_account_settings (self.config ['account'])
 
@@ -277,7 +281,44 @@ class BaseCommand (object):
          return s
 
    #----------------------------------------------------------------
-   def cache_load_message (self, uid):
+   def cache_filename_for_uid (self, uid):
+      """
+         Determines the absolute path of a cache file for the given UID.
+      """
+
+      cache_dir = os.path.join (
+            os.path.expanduser (self.config ['cache_dir']),
+            self.config ['account'])
+      filename = os.path.join (cache_dir, "%s.webmail" % uid)
+      return filename
+
+   #----------------------------------------------------------------
+   def cache_has_message (self, uid):
+      """
+         Determine if the given message is cached in the message cache.
+
+         uid:
+            The message to check for in the cache.
+         Config Settings:
+            cache_enabled:
+               Whether emails should be written to a directory under cache_dir
+               upon being fetched for later recall.  If this is False, this
+               method will always return False.
+            cache_dir:
+               The directory under which emails are written.  Emails will be written
+               to a directory under cache_dir based on the account from which they
+               were read.
+
+      """
+      
+      if not self.config ['cache_enabled']:
+         return False
+
+      filename = self.cache_filename_for_uid (uid)
+      return os.path.exists (filename)
+
+   #----------------------------------------------------------------
+   def cache_fetch_message (self, uid):
       """
          Load a message item from the cache if it exists.  Returns None if
          the file does not exist in the cache or the cache is disabled.
@@ -299,11 +340,7 @@ class BaseCommand (object):
          return None
 
       try:
-         cache_dir = os.path.join (
-               os.path.expanduser (self.config ['cache_dir']),
-               self.config ['account'])
-
-         filename = os.path.join (cache_dir, "%s.webmail" % uid)
+         filename = self.cache_filename_for_uid (uid)
          raw_message = None
 
          with open (filename, 'rb') as in_file:
@@ -316,11 +353,42 @@ class BaseCommand (object):
          return None
 
    #----------------------------------------------------------------
-   def load_message (self, client, uid, threshold = None):
+   def fetch_message (self, client, uid):
       """
-         Loads an emessage from the cache directory or downloads
-         the emessage from the server if not found or if the cache
+         Loads a message from the cache directory or downloads
+         the message from the server if not found or if the cache
          is not enabled.
+
+         client:
+            A MailClient used to fetch messages.
+         uid:
+            The UID of the message to be fetched.
+
+         Config Settings:
+            cache_enabled:
+               If this setting is False, fetch_message will not attempt to
+               load the message from the email cache, nor will it save
+               messages to the email cache.
+      """
+      
+      message = None
+
+      if self.config ['cache_enabled']:
+         message = self.cache_fetch_message (uid)
+
+      if not message:
+         message = client.fetch_message (uid)
+         if message is not None and self.config ['cache_enabled']:
+            self.cache_save_message (uid, message)
+
+      return message
+
+   #----------------------------------------------------------------
+   def fetch_message_headers (self, client, uid, threshold = None):
+      """
+         Loads message headers from the IMAP server and caches
+         messages if the cache is enabled and the threshold
+         is not exceeded.
 
          client:
             A MailClient used to fetch messages.
@@ -328,35 +396,28 @@ class BaseCommand (object):
             The UID of the message to be fetched.
          threshold:
             If specified, the maximum size in bytes of a message
-            to be fetched.  If the message is larger and not
-            already cached, ThresholdExceeded will be raised.
+            to be fetched.  If the message is larger it will
+            not be cached.
          
          Config Settings:
             cache_enabled:
-               If this setting is False, load_message will not attempt to
+               If this setting is False, fetch_message will not attempt to
                load the message from the email cache.
       """
       
-      if not self.config ['cache_enabled']:
-         return client.fetch_message (uid)
-      
-      message = self.cache_load_message (uid)
+      size = client.fetch_message_size (uid)
 
-      if not message:
-         size = client.fetch_message_size (uid)
+      if size is None:
+         # The message doesn't exist on the IMAP server.
+         return None
 
-         if size is None:
-            # The message doesn't exist on the IMAP server.
-            return None
-
-         if threshold is not None and size > threshold:
-            message = client.fetch_message_headers (uid)
-         else:
+      elif self.config ['cache_enabled'] and (threshold is None or size < threshold):
+         if not self.cache_has_message (uid):
             message = client.fetch_message (uid)
             if message is not None:
                self.cache_save_message (uid, message)
 
-      return message
+      return client.fetch_message_headers (uid)
 
    #----------------------------------------------------------------
    def cache_save_message (self, uid, message):
@@ -473,8 +534,8 @@ class BaseCommand (object):
       
       line = None
       
-      message = self.load_message (client, uid,
-            threshold = self.config ['download_threshold'])
+      threshold = self.config ['download_threshold']
+      message = self.fetch_message_headers (client, uid, threshold = threshold)
       
       if message is None: 
          raise NotImplementedError ("Message partial fetching not yet implemented.")
@@ -847,6 +908,9 @@ class ReadMailCommand (BaseCommand):
          -i, --inbox <inbox>           (config: imap_mailbox)
             The IMAP mailbox from which to read.  Default is 'INBOX'.
 
+         -m, --mailpart <num>
+            The mailpart to be inspected.
+
          --no-ssl                      (config: imap_ssl)
             Disables IMAP SSL/TLS.  Not recommended, enabled by default.
 
@@ -866,8 +930,8 @@ class ReadMailCommand (BaseCommand):
 
    #----------------------------------------------------------------
    def __init__ (self, argv):
-      SHORTOPTS   = 'u:p:H:i:P:'
-      LONGOPTS    = ['username=', 'password=', 'host=', 'inbox=', 'port=', 'no-ssl']
+      SHORTOPTS   = 'u:p:H:i:P:m:'
+      LONGOPTS    = ['username=', 'password=', 'host=', 'inbox=', 'port=', 'no-ssl', 'mailpart']
       
       self.message_uid = None
       self.message_part = None
@@ -902,6 +966,8 @@ class ReadMailCommand (BaseCommand):
             self.config ['imap_port'] = int (val)
          elif opt in ['--no-ssl']:
             self.config ['imap_ssl'] = False
+         elif opt in ['-m', '--mailpart']:
+            self.message_part = int (val)
 
    #----------------------------------------------------------------
    def run (self):
@@ -910,7 +976,7 @@ class ReadMailCommand (BaseCommand):
       # reading messages, so they are flagged as read.
       client.set_mailbox (self.config ['imap_mailbox'])
 
-      message = self.load_message (client, self.message_uid)
+      message = self.fetch_message (client, self.message_uid)
       if message is None:
          raise Exception ("No message exists with UID %s." % self.message_uid)
       
@@ -1000,7 +1066,7 @@ if __name__ == "__main__":
    acct_name = None
 
    argv = sys.argv [1:]
-   
+
    for arg in argv[:]:
       if arg in COMMAND_MAP:
          cmd = COMMAND_MAP [arg]
