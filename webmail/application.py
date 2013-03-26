@@ -51,6 +51,7 @@ DEFAULT_CONFIG = {
 
       'verbose':                 0,
       'supress':                 False,
+      'interactive':             True,
       'line_width':              120,
       'line_format':             '[$status] $uid <>    <$sender_name> $date',
       'st_date_format_recent':   '%b %d %l:%M%P',
@@ -76,11 +77,11 @@ DEFAULT_CONFIG = {
 
 DEFAULT_CONFIG_FILENAMES = ["/etc/webmail.json", "~/.webmail.json"]
 
-_G_SHORTOPTS = 'c:i:l:sa:'
+_G_SHORTOPTS = 'c:i:l:sa:N'
 _G_LONGOPTS = ['config=', 'imap-host=', 'imap-port=',
                'imap-user=', 'imap-password=',
                'inbox=', 'limit=', 'supress',
-               'account=', 'debug']
+               'account=', 'debug', 'no-prompt']
 
 #-------------------------------------------------------------------
 class ThresholdExceeded (Exception):
@@ -235,6 +236,8 @@ class BaseCommand (object):
             self.config ['account'] = str (val)
          elif opt in ['--debug']:
             self.config ['debug'] = True
+         elif opt in ['-N', '--no-prompt']:
+            self.config ['interactive'] = False
 
       self.process_account_settings (self.config ['account'])
 
@@ -386,9 +389,10 @@ class BaseCommand (object):
          
       except Exception as e:
          print ("Could not save message %s to cache: %s" % (uid, e), file = sys.stderr)
+         raise e
 
    #----------------------------------------------------------------
-   def perform_login (self):
+   def perform_imap_login (self):
       """
          Attempt to perform a login with the current settings,
          prompting the user if necessary for a username
@@ -397,10 +401,14 @@ class BaseCommand (object):
 
       while not self.config ['imap_username'] or \
             not self.config ['imap_username'].strip ():
+         if not self.config ['interactive']:
+            raise Exception ("No imap_username configured.")
          sys.stdout.write ("Username: ")
          self.config ['imap_username'] = input ()
 
       while not self.config ['imap_password']:
+         if not self.config ['interactive']:
+            raise Exception ("No imap_password configured.")
          self.config ['imap_password'] = getpass.getpass ()
 
       client = MailClient ()
@@ -680,7 +688,7 @@ class SearchMailCommand (BaseQueryCommand):
       to perform operations on search results.
 
       Usage:
-         webmail search <options / queries / operations>
+         webmail --search <options / queries / operations>
       
       Options:
          -u, --username <username>     (config: imap_username)
@@ -715,13 +723,7 @@ class SearchMailCommand (BaseQueryCommand):
          --unflag FLAG
             Remove the given flag from each message.
 
-      Parameters:
-         UID
-            Required. The UID of the message to read.
-
       Notes:
-         Operations may only be performed on search results.
-
          This is the default command.  For a list of available commands,
          type "webmail help".
    """
@@ -766,7 +768,7 @@ class SearchMailCommand (BaseQueryCommand):
 
    #----------------------------------------------------------------
    def run (self):
-      client = self.perform_login ()
+      client = self.perform_imap_login ()
       
       client.set_mailbox (self.config ['imap_mailbox'], True)
 
@@ -846,6 +848,9 @@ class ReadMailCommand (BaseCommand):
          --no-ssl                      (config: imap_ssl)
             Disables IMAP SSL/TLS.  Not recommended, enabled by default.
 
+         --peek
+            Do not mark the message as read. 
+
          -h, --help
             Prints this help message.
 
@@ -896,7 +901,7 @@ class ReadMailCommand (BaseCommand):
 
    #----------------------------------------------------------------
    def run (self):
-      client = self.perform_login ()
+      client = self.perform_imap_login ()
       # The readonly flag should be false once we are actually
       # reading messages, so they are flagged as read.
       client.set_mailbox (self.config ['imap_mailbox'])
@@ -954,21 +959,49 @@ class ReadMailCommand (BaseCommand):
          handler.open ()
       
 #-------------------------------------------------------------------
+class CountMailCommand (SearchMailCommand):
+   """
+      A simple version of the search command which prints a
+      number representing the number of results instead of
+      a listing of the results.  Useful for scripting.
+   """
+
+   #----------------------------------------------------------------
+   def run (self):
+      client = self.perform_imap_login ()
+      
+      client.set_mailbox (self.config ['imap_mailbox'], True)
+
+      message = "%d"
+      
+      # If no query is specified, display new messages.
+      if len (self.query.phrases) < 1:
+         self.query = self.query.unseen ()
+      
+      uids = client.search (self.query)
+      uids.reverse ()
+      
+      print (message % len (uids))
+
+#-------------------------------------------------------------------
 COMMAND_MAP = {
-      "search":      SearchMailCommand,
-      "read":        ReadMailCommand
+      "--search":      SearchMailCommand,
+      "--count":       CountMailCommand,
+      "--read":        ReadMailCommand
 }
 
 #-------------------------------------------------------------------
 if __name__ == "__main__":
-   cmd_name = "search"
+   cmd_name = "--search"
    acct_name = None
 
    argv = sys.argv [1:]
-
-   if len (argv) > 0 and len (argv[0]) > 0 and argv[0][0] != '-':
-      cmd_name = argv.pop (0)
    
+   for arg in argv:
+      if arg in COMMAND_MAP.keys ():
+         cmd_name = arg
+         argv.remove (arg)
+
    try:
       if cmd_name not in COMMAND_MAP:
          raise Exception ("Unrecognized command: %s" % cmd_name)
