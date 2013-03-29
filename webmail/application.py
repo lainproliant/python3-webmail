@@ -1027,13 +1027,12 @@ class ReadMailCommand (BaseCommand):
          print ()
       
       if self.message_part is None:
-         if not self.config ['supress']:
-            n = 0
-            for part in message.mailparts:
-               if part.type == 'text/plain' and part.is_body:
-                  handler = MailpartHandler (self.config, part, n)
-                  handler.open ()
-               n += 1
+         n = 0
+         for part in message.mailparts:
+            if part.type == 'text/plain' and part.is_body:
+               handler = MailpartHandler (self.config, part, n)
+               handler.open ()
+            n += 1
 
       else:
          if self.message_part >= len (message.mailparts):
