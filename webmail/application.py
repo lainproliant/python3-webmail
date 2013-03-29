@@ -66,8 +66,9 @@ DEFAULT_CONFIG = {
 
       'mime:text/plain':         "PRINT",
       'mime:text/html':          'chromium --user-data-dir=/tmp %s',
+      'mime:text/*':             'cat %s',
       'mime:application/pdf':    'evince %s',
-      'mime:image/*':            'geeqie %s',
+      'mime:image/*':            'feh %s',
       'mime:video/*':            'vlc %s',
       
       'debug':                   False,
@@ -483,6 +484,44 @@ class BaseCommand (object):
             self.config ['imap_ssl'])
 
       return client
+
+   #----------------------------------------------------------------
+   def print_header_summary (self, message):
+      """
+         Prints a summary of the given message's header data,
+         including date, to, from, cc, and information about
+         the message's mailparts if available.
+      """
+
+      from_addr = message.get_address ('from')
+      to_addrs = message.get_addresses ('to')
+      cc_addrs = message.get_addresses ('cc')
+
+      date_ts = email.utils.parsedate_tz (message.get_decoded_header ('Date'))
+      date = datetime.datetime.fromtimestamp (email.utils.mktime_tz (
+         date_ts))
+      
+      print ("Date: %s" % date.strftime (self.config ['date_format']))
+      print ("Subject: %s" % self.normalize (message.get_subject ()))
+      print ("From: %s <%s>" % from_addr)
+      print ("To: %s" % (', '.join (["%s <%s>" % x for x in to_addrs])))
+      if cc_addrs:
+         print ("CC: %s" % (', '.join (["%s <%s>" % x for x in cc_addrs])))
+      print ()
+      n = 0
+      for part in message.mailparts:
+         mailpart_str = "mailpart: %d" % n
+         
+         if part.disposition is not None:
+            mailpart_str = "%s (%s: %s)" % (mailpart_str, part.disposition, part.type)
+         else:
+            mailpart_str = "%s (%s)" % (mailpart_str, part.type)
+
+         if part.filename is not None:
+            mailpart_str = "%s [%s]" % (mailpart_str, part.filename) 
+         
+         print (mailpart_str)
+         n += 1
 
    #----------------------------------------------------------------
    def print_message_status (self, client, uid):
@@ -972,6 +1011,7 @@ class ReadMailCommand (BaseCommand):
    #----------------------------------------------------------------
    def run (self):
       client = self.perform_imap_login ()
+
       # The readonly flag should be false once we are actually
       # reading messages, so they are flagged as read.
       client.set_mailbox (self.config ['imap_mailbox'])
@@ -981,38 +1021,10 @@ class ReadMailCommand (BaseCommand):
          raise Exception ("No message exists with UID %s." % self.message_uid)
       
       client.flag (self.message_uid, '\\Seen')
-
-      from_addr = message.get_address ('from')
-      to_addrs = message.get_addresses ('to')
-      cc_addrs = message.get_addresses ('cc')
-
-      date_ts = email.utils.parsedate_tz (message.get_decoded_header ('Date'))
-      date = datetime.datetime.fromtimestamp (email.utils.mktime_tz (
-         date_ts))
       
-      print ("Date: %s" % date.strftime (self.config ['date_format']))
-      print ("Subject: %s" % self.normalize (message.get_subject ()))
-      print ("From: %s <%s>" % from_addr)
-      print ("To: %s" % (', '.join (["%s <%s>" % x for x in to_addrs])))
-      if cc_addrs:
-         print ("CC: %s" % (', '.join (["%s <%s>" % x for x in cc_addrs])))
-      print ()
-      n = 0
-      for part in message.mailparts:
-         mailpart_str = "mailpart: %d" % n
-         
-         if part.disposition is not None:
-            mailpart_str = "%s (%s: %s)" % (mailpart_str, part.disposition, part.type)
-         else:
-            mailpart_str = "%s (%s)" % (mailpart_str, part.type)
-
-         if part.filename is not None:
-            mailpart_str = "%s [%s]" % (mailpart_str, part.filename) 
-         
-         print (mailpart_str)
-         n += 1
-
-      print ()
+      if not self.config ['supress']: 
+         self.print_header_summary (message)
+         print ()
       
       if self.message_part is None:
          if not self.config ['supress']:
@@ -1024,6 +1036,9 @@ class ReadMailCommand (BaseCommand):
                n += 1
 
       else:
+         if self.message_part >= len (message.mailparts):
+            raise Exception ("Invalid mailpart, message has only %d mailpart(s)." % len (message.mailparts))
+
          part = message.mailparts [self.message_part]
          handler = MailpartHandler (self.config, part, self.message_part)
          handler.open ()
