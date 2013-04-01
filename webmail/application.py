@@ -956,6 +956,15 @@ class ReadMailCommand (BaseCommand):
          --peek
             Do not mark the message as read. 
 
+         -s, --supress
+            Don't show the message header summary.
+
+         --header
+            Only show the message header summary, show no message parts.
+
+         --raw-header
+            Print the raw header instead of a summary.
+
          -h, --help
             Prints this help message.
 
@@ -974,6 +983,9 @@ class ReadMailCommand (BaseCommand):
       
       self.message_uid = None
       self.message_part = None
+
+      self.header_only = False
+      self.raw_header = False
 
       BaseCommand.__init__ (
             self, argv, SHORTOPTS, LONGOPTS, {})
@@ -1007,6 +1019,10 @@ class ReadMailCommand (BaseCommand):
             self.config ['imap_ssl'] = False
          elif opt in ['-m', '--mailpart']:
             self.message_part = int (val)
+         elif opt in ['--header']:
+            self.header_only = True
+         elif opt in ['--raw_header']:
+            self.raw_header = True
 
    #----------------------------------------------------------------
    def run (self):
@@ -1022,7 +1038,7 @@ class ReadMailCommand (BaseCommand):
       
       client.flag (self.message_uid, '\\Seen')
       
-      if not self.config ['supress']: 
+      if not self.config ['supress'] or self.header_only: 
          self.print_header_summary (message)
          print ()
       
