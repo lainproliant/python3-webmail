@@ -23,7 +23,7 @@ from string import Template
 from tempfile import NamedTemporaryFile
 from textwrap import TextWrapper
 
-import parsedatetime as pdt
+from parsedatetime import parsedatetime as pdt
 
 from .client import *
 from .data import parse_json
