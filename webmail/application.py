@@ -1,7 +1,7 @@
 #-------------------------------------------------------------------
 # webmail.application
 #
-# Implementation of a command line webmail interface. 
+# Implementation of a command line webmail interface.
 #
 # Author: Lee Supe
 # Date: March 11th, 2013
@@ -70,7 +70,7 @@ DEFAULT_CONFIG = {
       'mime:application/pdf':    'evince %s',
       'mime:image/*':            'feh %s',
       'mime:video/*':            'vlc %s',
-      
+
       'debug':                   False,
 
       'default':                 {}
@@ -91,11 +91,11 @@ class ThresholdExceeded (Exception):
       Exception.__init__ (self, "A threshold was exceeded.")
 
 #-------------------------------------------------------------------
-class MailpartHandler (object):
+class MailpartHandler ():
    """
       An object for opening and saving mailparts.
    """
-   
+
    def __init__ (self, config, part, part_num):
      self.config = config
      self.part = part
@@ -104,7 +104,7 @@ class MailpartHandler (object):
    def get_file_extension (self):
       """
          Determine an appropriate file extension for the content
-         based on the filename or guess the extension based on 
+         based on the filename or guess the extension based on
          the content MIME type.
       """
 
@@ -139,14 +139,14 @@ class MailpartHandler (object):
 
       handler_key = 'mime:%s' % self.part.type
       handler = None
-      
+
       if handler_key not in self.config:
          handler_key = 'mime:%s/*' % (self.part.type.split ('/')[0])
          if handler_key not in self.config:
             raise Exception ("No file handler configured to open mimetype: %s." % self.part.type)
 
       handler = self.config [handler_key]
-      
+
       if handler == 'PRINT':
          tw = TextWrapper (
                break_long_words = False,
@@ -177,12 +177,12 @@ class MailpartHandler (object):
 
          retcode = subprocess.call (handler_cmd, shell = True)
          os.unlink (tmpfile.name)
-         
+
          if retcode != 0:
             raise Exception ("Error executing MIME handler (%d): %s" % (retcode, handler_cmd))
-   
+
 #-------------------------------------------------------------------
-class BaseCommand (object):
+class BaseCommand ():
    """
       The base command object.  Loads settings from config files
       in a standard way and coordinates other global settings.
@@ -196,11 +196,11 @@ class BaseCommand (object):
       self.argv_copy = argv[:]
       self.shortopts = _G_SHORTOPTS + shortopts
       self.longopts = _G_LONGOPTS + longopts
-      self.optional_config_files = DEFAULT_CONFIG_FILENAMES 
+      self.optional_config_files = DEFAULT_CONFIG_FILENAMES
       self.specific_config_files = []
       self.config = DEFAULT_CONFIG
       self.config.update (config)
-      
+
       opts, args = getopt.getopt (self.argv, self.shortopts, self.longopts)
       self.process_config (opts, args)
 
@@ -218,10 +218,10 @@ class BaseCommand (object):
             self.config.update (parse_json (filename))
          except FileNotFoundError as e:
             pass
-         
+
       for filename in self.specific_config_files:
          self.config.update (parse_json (filename))
-      
+
       for opt, val in opts:
          if opt in ['-v', '--verbose']:
             self.config ['verbose'] += 1
@@ -264,7 +264,7 @@ class BaseCommand (object):
       """
          Normalize the given Unicode string for printing to a terminal based
          on settings in the config dictionary.
-         
+
          Config Settings:
             normalize_enabled:
                Whether or not normalization should be performed.
@@ -311,7 +311,7 @@ class BaseCommand (object):
                were read.
 
       """
-      
+
       if not self.config ['cache_enabled']:
          return False
 
@@ -326,7 +326,7 @@ class BaseCommand (object):
 
          uid:
             The message to load from cache.
-         
+
          Config Settings:
             cache_enabled:
                Whether emails should be written to a directory under cache_dir
@@ -346,10 +346,10 @@ class BaseCommand (object):
 
          with open (filename, 'rb') as in_file:
             raw_message = in_file.read ()
-         
-         message = pyzmail.PyzMessage.factory (raw_message) 
+
+         message = pyzmail.PyzMessage.factory (raw_message)
          return message
-   
+
       except FileNotFoundError as e:
          return None
 
@@ -371,7 +371,7 @@ class BaseCommand (object):
                load the message from the email cache, nor will it save
                messages to the email cache.
       """
-      
+
       message = None
 
       if self.config ['cache_enabled']:
@@ -399,13 +399,13 @@ class BaseCommand (object):
             If specified, the maximum size in bytes of a message
             to be fetched.  If the message is larger it will
             not be cached.
-         
+
          Config Settings:
             cache_enabled:
                If this setting is False, fetch_message will not attempt to
                load the message from the email cache.
       """
-      
+
       size = client.fetch_message_size (uid)
 
       if size is None:
@@ -424,7 +424,7 @@ class BaseCommand (object):
    def cache_save_message (self, uid, message):
       """
          Save the given message to the email cache.
-         
+
          uid:
             The UID of the message to be saved.
          message:
@@ -450,7 +450,7 @@ class BaseCommand (object):
          filename = os.path.join (cache_dir, "%s.webmail" % uid)
          with open (filename, 'wb') as out_file:
             out_file.write (message.as_string ().encode (self.config ['file_encoding']))
-         
+
       except Exception as e:
          print ("Could not save message %s to cache: %s" % (uid, e), file = sys.stderr)
          raise e
@@ -500,7 +500,7 @@ class BaseCommand (object):
       date_ts = email.utils.parsedate_tz (message.get_decoded_header ('Date'))
       date = datetime.datetime.fromtimestamp (email.utils.mktime_tz (
          date_ts))
-      
+
       print ("Date: %s" % date.strftime (self.config ['date_format']))
       print ("Subject: %s" % self.normalize (message.get_subject ()))
       print ("From: %s <%s>" % from_addr)
@@ -511,15 +511,15 @@ class BaseCommand (object):
       n = 0
       for part in message.mailparts:
          mailpart_str = "mailpart: %d" % n
-         
+
          if part.disposition is not None:
             mailpart_str = "%s (%s: %s)" % (mailpart_str, part.disposition, part.type)
          else:
             mailpart_str = "%s (%s)" % (mailpart_str, part.type)
 
          if part.filename is not None:
-            mailpart_str = "%s [%s]" % (mailpart_str, part.filename) 
-         
+            mailpart_str = "%s [%s]" % (mailpart_str, part.filename)
+
          print (mailpart_str)
          n += 1
 
@@ -570,13 +570,13 @@ class BaseCommand (object):
                cause "..." to be printed instead of an ellipsis.
 
       """
-      
+
       line = None
-      
+
       threshold = self.config ['download_threshold']
       message = self.fetch_message_headers (client, uid, threshold = threshold)
-      
-      if message is None: 
+
+      if message is None:
          raise NotImplementedError ("Message partial fetching not yet implemented.")
 
       else:
@@ -592,7 +592,7 @@ class BaseCommand (object):
          date = datetime.datetime.fromtimestamp (email.utils.mktime_tz (
             date_ts))
 
-      
+
       template = Template (self.config ['line_format'])
       pre_line = template.substitute (
             uid = uid,
@@ -600,8 +600,8 @@ class BaseCommand (object):
             sender_addr = sender_addr,
             status = status,
             subject = subject,
-            date = date.strftime (self.config ['st_date_format_recent'])) 
-      
+            date = date.strftime (self.config ['st_date_format_recent']))
+
       ellipsis = '...'
       if self.config ['print_encoding'] != 'ascii':
          ellipsis = '\u2026'
@@ -614,7 +614,7 @@ class BaseCommand (object):
             else:
                subject = subject.ljust (max_len)
 
-         line = pre_line.replace ('<>', subject) 
+         line = pre_line.replace ('<>', subject)
 
       else:
          line = pre_line
@@ -622,7 +622,7 @@ class BaseCommand (object):
       if self.config ['line_width'] is not None:
          if len (line) > self.config ['line_width']:
             line = line [0:(self.config ['line_width'] - len (ellipsis))] + ellipsis
-      
+
       print (line)
 
    #----------------------------------------------------------------
@@ -659,18 +659,18 @@ class BaseQueryCommand (BaseCommand):
       BaseCommand.process_config (self, opts, args)
 
       q = self.query
-      
+
       or_found = False
       not_found = False
       not_flag = False
-      
+
       or_stack = []
-      
+
       n = 0
 
       for opt, val in opts:
          n += 1
-         
+
          if opt == '--all':
             q = q.all ()
          elif opt == '--answered':
@@ -749,11 +749,11 @@ class BaseQueryCommand (BaseCommand):
             q = q.unkeyword (str (val))
          elif opt == '--unseen':
             q = q.unseen ()
-         
+
          if or_found:
             or_found = False
             or_stack.append (q.phrases.pop ())
-         
+
          elif not_found:
             not_found = False
             not_flag = True
@@ -791,7 +791,7 @@ class SearchMailCommand (BaseQueryCommand):
 
       Usage:
          webmail --search <options / queries / operations>
-      
+
       Options:
          -u, --username <username>     (config: imap_username)
             The IMAP username.  User will be prompted if missing.
@@ -821,7 +821,7 @@ class SearchMailCommand (BaseQueryCommand):
       Operations:
          --flag FLAG
             Flag each message with the given flag.
-         
+
          --unflag FLAG
             Remove the given flag from each message.
 
@@ -835,7 +835,7 @@ class SearchMailCommand (BaseQueryCommand):
       SHORTOPTS   = 'su:p:l:H:i:p'
       LONGOPTS    = ['username=', 'password=', 'limit=', 'host=', 'inbox=', 'port=', 'no-ssl',
             'flag=', 'unflag=', 'print']
-      
+
       self.operations = []
 
       BaseQueryCommand.__init__ (
@@ -846,7 +846,7 @@ class SearchMailCommand (BaseQueryCommand):
    #----------------------------------------------------------------
    def process_config (self, opts, args):
       BaseQueryCommand.process_config (self, opts, args)
-      
+
       for opt, val in opts:
          if opt in ['-u', '--username']:
             self.config ['imap_username'] = str (val)
@@ -871,22 +871,22 @@ class SearchMailCommand (BaseQueryCommand):
    #----------------------------------------------------------------
    def run (self):
       client = self.perform_imap_login ()
-      
+
       client.set_mailbox (self.config ['imap_mailbox'], True)
 
       message = "%d message(s) found."
-      
+
       # If no query is specified, display new messages.
       if len (self.query.phrases) < 1:
          self.query = self.query.unseen ()
          message = "%d new message(s)."
-      
+
       if self.config ['debug']:
          print ("Query: %s" % str (self.query))
 
       uids = client.search (self.query)
       uids.reverse ()
-      
+
       print (message % len (uids))
 
       if self.config ['limit'] is not None:
@@ -894,7 +894,7 @@ class SearchMailCommand (BaseQueryCommand):
 
       if not self.operations:
          self.operations.append (('--print', None))
-      
+
       if len (uids) > 0:
          for opt, val in self.operations:
             if opt == '--print' and not self.config ['supress']:
@@ -930,7 +930,7 @@ class ReadMailCommand (BaseCommand):
 
       Usage:
          webmail read <options> UID
-      
+
       Options:
          -u, --username <username>     (config: imap_username)
             The IMAP username.  User will be prompted if missing.
@@ -954,7 +954,7 @@ class ReadMailCommand (BaseCommand):
             Disables IMAP SSL/TLS.  Not recommended, enabled by default.
 
          --peek
-            Do not mark the message as read. 
+            Do not mark the message as read.
 
          -s, --supress
             Don't show the message header summary.
@@ -980,7 +980,7 @@ class ReadMailCommand (BaseCommand):
    def __init__ (self, argv):
       SHORTOPTS   = 'u:p:H:i:P:m:'
       LONGOPTS    = ['username=', 'password=', 'host=', 'inbox=', 'port=', 'no-ssl', 'mailpart']
-      
+
       self.message_uid = None
       self.message_part = None
 
@@ -993,7 +993,7 @@ class ReadMailCommand (BaseCommand):
    #----------------------------------------------------------------
    def process_config (self, opts, args):
       BaseCommand.process_config (self, opts, args)
-      
+
       if len (args) < 1:
          raise Exception ("No message UID specified to read.")
 
@@ -1035,13 +1035,13 @@ class ReadMailCommand (BaseCommand):
       message = self.fetch_message (client, self.message_uid)
       if message is None:
          raise Exception ("No message exists with UID %s." % self.message_uid)
-      
+
       client.flag (self.message_uid, '\\Seen')
-      
-      if not self.config ['supress'] or self.header_only: 
+
+      if not self.config ['supress'] or self.header_only:
          self.print_header_summary (message)
          print ()
-      
+
       if self.message_part is None:
          n = 0
          for part in message.mailparts:
@@ -1057,7 +1057,7 @@ class ReadMailCommand (BaseCommand):
          part = message.mailparts [self.message_part]
          handler = MailpartHandler (self.config, part, self.message_part)
          handler.open ()
-      
+
 #-------------------------------------------------------------------
 class CountMailCommand (SearchMailCommand):
    """
@@ -1069,18 +1069,18 @@ class CountMailCommand (SearchMailCommand):
    #----------------------------------------------------------------
    def run (self):
       client = self.perform_imap_login ()
-      
+
       client.set_mailbox (self.config ['imap_mailbox'], True)
 
       message = "%d"
-      
+
       # If no query is specified, display new messages.
       if len (self.query.phrases) < 1:
          self.query = self.query.unseen ()
-      
+
       uids = client.search (self.query)
       uids.reverse ()
-      
+
       print (message % len (uids))
 
 #-------------------------------------------------------------------
@@ -1121,6 +1121,6 @@ if __name__ == "__main__":
 
       if '--debug' in argv:
          print ('-' * 70, file=sys.stderr)
-         traceback.print_exc (file=sys.stderr) 
+         traceback.print_exc (file=sys.stderr)
          sys.exit (1)
 
