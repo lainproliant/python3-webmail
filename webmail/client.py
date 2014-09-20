@@ -21,7 +21,7 @@ class MailClientException (Exception):
       Exception.__init__ (self, message)
 
 #-------------------------------------------------------------------
-class MailClient (object):
+class MailClient ():
    """
       An object for accessing and manipulating messages in an
       IMAP email inbox.
@@ -73,11 +73,11 @@ class MailClient (object):
       """
 
       status, response = self.imap.uid ('fetch', id, '(RFC822.HEADER)')
-      
+
       if response[0] is None:
          return None
-      
-      return pyzmail.PyzMessage.factory (response[0][1]) 
+
+      return pyzmail.PyzMessage.factory (response[0][1])
 
    #----------------------------------------------------------------
    def fetch_message (self, id):
@@ -85,7 +85,7 @@ class MailClient (object):
          Fetch the given message from the server and parse it
          into a PyzMessage structure.
       """
-      
+
       body = self.fetch_message_body (id)
 
       if body is None:
@@ -106,11 +106,11 @@ class MailClient (object):
          ids.extend ((id_pair).decode ().split ())
 
       return ids
-   
+
    #----------------------------------------------------------------
    def search (self, q):
       """
-         Search the IMAP inbox with a query constructed from 
+         Search the IMAP inbox with a query constructed from
          the given IMAPQuery object.  Returns a list of UIDs
          for messages matching the given criterion.
       """
@@ -130,7 +130,7 @@ class MailClient (object):
       """
 
       self.imap.uid ('store', uid, '+FLAGS', *flags)
-   
+
    #----------------------------------------------------------------
    def unflag (self, uid, *flags):
       """
@@ -162,7 +162,7 @@ class MailClient (object):
          return True
 
 #-------------------------------------------------------------------
-class IMAPQuery (object):
+class IMAPQuery ():
    """
       An object providing contextual methods to
       build an IMAP search query.
@@ -180,7 +180,7 @@ class IMAPQuery (object):
          sb.extend (phrase)
 
       return ' '.join (sb)
-   
+
    #----------------------------------------------------------------
    def extend (self, *args):
       """
@@ -276,7 +276,7 @@ class IMAPQuery (object):
          Extend the query with each phrase from the
          given query, prepended with "NOT".
       """
-      
+
       q = self
 
       for phrase in query.phrases:
